@@ -27,6 +27,8 @@ final class MonitorStore {
     /// 警告として拾わなかったエラー行の数。大半は状態の問い合わせに伴う実害のない行。
     private(set) var otherErrorCount = 0
     private(set) var logConnected = false
+    /// NAS との SMB 接続の累計値。5秒おきに読む。
+    private(set) var smbSamples: [SMBConnectionSample] = []
     /// 経過時間の表示を毎秒更新するための現在時刻。
     private(set) var now = Date()
 
@@ -41,6 +43,7 @@ final class MonitorStore {
 
         Task { await pollStatus() }
         Task { await followLog() }
+        Task { await pollSMB() }
         Task {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
@@ -54,6 +57,20 @@ final class MonitorStore {
     var latestCopy: CopyProgressSample? { copySamples.last }
     var latestEvent: EventCollectionSample? { eventSamples.last }
     var itemRates: [ItemRate] { ItemRate.intervals(copySamples) }
+    var latestSMB: SMBConnectionSample? { smbSamples.last }
+
+    /// 5秒おきの区間ごとの SMB の速さ。グラフ用。
+    var smbRates: [SMBRate] {
+        zip(smbSamples, smbSamples.dropFirst()).compactMap { SMBRate(from: $0, to: $1) }
+    }
+
+    /// 直近 `window` 秒の SMB の速さ。5秒ごとの揺れをならして、1分おきのログと見比べやすくする。
+    func recentSMBRate(window: TimeInterval = 60) -> SMBRate? {
+        guard let last = smbSamples.last,
+              let first = smbSamples.last(where: { last.date.timeIntervalSince($0.date) >= window }) ?? smbSamples.first,
+              first.date < last.date else { return nil }
+        return SMBRate(from: first, to: last)
+    }
 
     var directoryStats: [DirectoryStat] {
         DirectoryAnalysis.dwell(samples: copySamples, depth: dwellDepth, now: status?.running == true ? now : nil)
@@ -83,6 +100,17 @@ final class MonitorStore {
                 statusError = error.localizedDescription
             }
             try? await Task.sleep(for: .seconds(2))
+        }
+    }
+
+    private func pollSMB() async {
+        while !Task.isCancelled {
+            if let sample = try? await TMCommands.smbConnection() {
+                smbSamples.append(sample)
+                // 5秒おきで約3時間分を残す。
+                if smbSamples.count > 2200 { smbSamples.removeFirst(smbSamples.count - 2200) }
+            }
+            try? await Task.sleep(for: .seconds(5))
         }
     }
 

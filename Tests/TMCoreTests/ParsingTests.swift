@@ -136,3 +136,25 @@ let copyProgressMessage = """
     #expect(Significance(entry("IOCheck", "Failed destination write test with error ...", .info)) == .writeTestFailed)
     #expect(Significance(entry("General", "fs_snapshot_list failed: Operation not supported")) == nil)
 }
+
+@Test func parsesSMBConnectionFromNettop() throws {
+    let output = """
+    time,,interface,state,bytes_in,bytes_out,rx_dupe,rx_ooo,re-tx,rtt_avg,rcvsize,tx_win,tc_class,tc_mgt,cc_algo,P,C,R,W,arch,
+    16:18:53.427811,kernel_task.0,,,1022636941,574522243,1037839,5450142,747567,,,,,,,,,,,,
+    16:18:53.410568,tcp4 192.168.10.109:50860<->192.168.10.115:445,en0,Established,1022636941,574522243,1037839,5450142,747567,23.66 ms,464112,3140608,BK_SYS,-,ledbat,-,-,-,-,so,
+    16:18:53.410568,tcp4 192.168.10.109:50861<->17.1.1.1:443,en0,Established,5,5,0,0,0,10 ms,0,0,BE,-,cubic,-,-,-,-,so,
+    """
+    let s = try #require(SMBConnectionSample.parse(nettopOutput: output, date: Date(timeIntervalSince1970: 0)))
+    #expect(s.bytesIn == 1_022_636_941)
+    #expect(s.retransmittedBytes == 747_567)
+    #expect(s.rttMilliseconds == 23.66)
+    #expect(s.trafficClass == "BK_SYS")
+    #expect(s.congestionControl == "ledbat")
+
+    var later = s
+    later.date = Date(timeIntervalSince1970: 10)
+    later.bytesIn += 9_000_000
+    let rate = try #require(SMBRate(from: s, to: later))
+    #expect(rate.inBytesPerSec == 900_000)
+    #expect(rate.outBytesPerSec == 0)
+}

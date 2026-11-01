@@ -21,6 +21,21 @@ struct TrendView: View {
                     }
                     .frame(height: 180)
                 }
+                Card(title: "NAS との SMB 通信 (MB/s)") {
+                    Chart(store.smbRates) { r in
+                        LineMark(x: .value("時刻", r.date), y: .value("MB/s", r.inBytesPerSec / 1e6), series: .value("系列", "受信"))
+                            .foregroundStyle(by: .value("系列", "受信"))
+                        LineMark(x: .value("時刻", r.date), y: .value("MB/s", r.outBytesPerSec / 1e6), series: .value("系列", "送信"))
+                            .foregroundStyle(by: .value("系列", "送信"))
+                    }
+                    .frame(height: 180)
+                }
+                Card(title: "SMB の往復時間 (ms)") {
+                    Chart(store.smbRates.filter { $0.rttMilliseconds != nil }) { r in
+                        LineMark(x: .value("時刻", r.date), y: .value("ms", r.rttMilliseconds ?? 0))
+                    }
+                    .frame(height: 140)
+                }
                 Card(title: "新規コピーの転送速度 (MB/s)") {
                     Chart(samples) { s in
                         if let v = s.mbPerSec {

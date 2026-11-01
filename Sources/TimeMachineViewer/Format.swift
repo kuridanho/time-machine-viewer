@@ -6,6 +6,10 @@ enum Format {
         return ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
     }
 
+    static func byteRate(_ bytesPerSec: Double) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(bytesPerSec), countStyle: .file) + "/s"
+    }
+
     static func count(_ value: Int?) -> String {
         guard let value else { return "—" }
         return value.formatted(.number)

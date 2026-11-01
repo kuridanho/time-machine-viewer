@@ -9,6 +9,7 @@ struct OverviewView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
+                bottleneck
                 if !warnings.isEmpty || store.otherErrorCount > 0 { noticesCard }
                 currentActivity
                 propagation
@@ -52,6 +53,43 @@ struct OverviewView: View {
             if let mount = status?.destinationMountPoint {
                 Label((mount as NSString).lastPathComponent, systemImage: "externaldrive")
                     .font(.callout).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: どこで時間がかかっているか
+
+    private var bottleneck: some View {
+        let rate = store.itemRates.last
+        let perItem = rate.flatMap(msPerItemValue)
+        let smb = store.recentSMBRate()
+        let connection = store.latestSMB
+        return Card(title: "どこで時間がかかっているか") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 28) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("1件あたりの時間").font(.caption).foregroundStyle(.secondary)
+                        Text(perItem.map { "\(Int($0.rounded())) ms" } ?? "—")
+                            .font(.system(size: 34, weight: .semibold).monospacedDigit())
+                    }
+                    Metric(label: "処理件数 (引き継ぎ + 新規)",
+                           value: rate.map { "\(Int(($0.propagatedPerMinute + $0.copiedPerMinute).rounded())) 件/分" } ?? "—")
+                    Metric(label: "SMB 受信 / 送信 (直近1分)",
+                           value: smb.map { "\(Format.byteRate($0.inBytesPerSec)) / \(Format.byteRate($0.outBytesPerSec))" } ?? "—")
+                    Metric(label: "往復時間", value: connection?.rttMilliseconds.map { "\($0.formatted(.number.precision(.fractionLength(1)))) ms" } ?? "—")
+                    Metric(label: "再送", value: smb.map { Format.byteRate($0.retransmitBytesPerSec) } ?? "—")
+                }
+                if let perItem, let rtt = connection?.rttMilliseconds, rtt > 0 {
+                    Text("1件の処理に、ネットワークの往復約 \(Int((perItem / rtt).rounded())) 回分の時間がかかっています。この倍率が大きく、SMB の受信量にも余裕があるときは、回線の速さよりも、1件ごとに NAS へ問い合わせて待つ回数が効いていると考えられます。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if let connection, connection.trafficClass == "BK_SYS" {
+                    Text("macOS はこの SMB 接続を背景処理の通信 (\(connection.trafficClass), \(connection.congestionControl)) として、低い優先度で流しています。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if connection == nil {
+                    Text("NAS との SMB 接続 (ポート 445) が見つかりません。").font(.caption).foregroundStyle(.secondary)
+                }
             }
         }
     }
@@ -168,7 +206,6 @@ struct OverviewView: View {
                         Metric(label: "処理した項目のうち引き継ぎ", value: Format.percent(share))
                         Metric(label: "直近の伸び (引き継ぎ / 新規)",
                                value: rate.map { "\(Int($0.propagatedPerMinute)) / \(Int($0.copiedPerMinute)) 件/分" } ?? "—")
-                        Metric(label: "1件あたりの時間", value: rate.flatMap(msPerItem) ?? "—")
                     }
                     Text("引き継ぎは、変わっていない項目を前回のバックアップから付け替える処理で、データはほとんど送りません。新規コピーが少ない回は転送速度が低く見えますが、引き継ぎの件数が伸びていれば処理は進んでいます。")
                         .font(.caption).foregroundStyle(.secondary)
@@ -191,10 +228,10 @@ struct OverviewView: View {
     }
 
     /// 引き継ぎは1件ごとにバックアップ先へ問い合わせるので、1件の時間が先の応答の遅さをよく表す。
-    private func msPerItem(_ rate: ItemRate) -> String? {
+    private func msPerItemValue(_ rate: ItemRate) -> Double? {
         let perMinute = rate.propagatedPerMinute + rate.copiedPerMinute
         guard perMinute > 0 else { return nil }
-        return "\(Int((60_000 / perMinute).rounded())) ms"
+        return 60_000 / perMinute
     }
 
     private func gauge(_ label: String, _ percent: Int?) -> some View {
