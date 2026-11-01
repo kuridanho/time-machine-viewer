@@ -126,3 +126,13 @@ let copyProgressMessage = """
     #expect(rates[0].propagatedPerMinute == 1000)
     #expect(rates[1].propagatedPerMinute == 600)
 }
+
+@Test func classifiesSignificantLines() {
+    func entry(_ category: String, _ message: String, _ level: LogEntry.Level = .error) -> LogEntry {
+        LogEntry(date: .now, level: level, category: category, process: "backupd", message: message)
+    }
+    #expect(Significance(entry("BackupDispatching", "Backup failed: BACKUP_IN_PROGRESS_REQUEST_DROPPED (46)")) == .requestDropped)
+    #expect(Significance(entry("BackupDispatching", "Backup failed: SOME_ERROR (12)")) == .backupFailed(reason: "SOME_ERROR (12)"))
+    #expect(Significance(entry("IOCheck", "Failed destination write test with error ...", .info)) == .writeTestFailed)
+    #expect(Significance(entry("General", "fs_snapshot_list failed: Operation not supported")) == nil)
+}

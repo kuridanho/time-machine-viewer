@@ -24,6 +24,8 @@ final class MonitorStore {
     /// 前回のバックアップの引き継ぎや構造の作り直しに関する記録。
     private(set) var structureEntries: [LogEntry] = []
     private(set) var attempt: Int?
+    /// 警告として拾わなかったエラー行の数。大半は状態の問い合わせに伴う実害のない行。
+    private(set) var otherErrorCount = 0
     private(set) var logConnected = false
     /// 経過時間の表示を毎秒更新するための現在時刻。
     private(set) var now = Date()
@@ -113,18 +115,21 @@ final class MonitorStore {
             if let n = firstInt(after: "Current Attempt: #", in: entry.message) { attempt = n }
         case "TMStructure", "PropagationLookAheads":
             structureEntries.append(entry)
-        case "IOCheck" where entry.message.contains("Failed"):
-            addNotice(entry, .warning, "バックアップ先への書き込みテストに失敗しました")
         default:
             break
         }
 
-        if entry.level == .error || entry.level == .fault {
-            addNotice(entry, .warning, "backupd がエラーを記録しました")
-        } else if entry.message.hasPrefix("Backup failed") || entry.message.contains("Backup canceled") {
-            addNotice(entry, .warning, "バックアップが中断されました")
-        } else if entry.message.hasPrefix("Backup completed") {
+        switch Significance(entry) {
+        case .writeTestFailed:
+            addNotice(entry, .warning, "バックアップ先への書き込みテストが時間切れになりました")
+        case .backupFailed:
+            addNotice(entry, .warning, "バックアップが失敗または中断しました")
+        case .requestDropped:
+            addNotice(entry, .info, "実行中のため、新しい開始要求は見送られました")
+        case .completed:
             addNotice(entry, .info, "バックアップが完了しました")
+        case nil:
+            if entry.level == .error || entry.level == .fault { otherErrorCount += 1 }
         }
     }
 

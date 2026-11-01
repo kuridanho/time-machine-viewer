@@ -59,3 +59,34 @@ public struct LogEntry: Identifiable, Sendable, Hashable {
             || message.contains("sticky exclusion extended attribute")
     }
 }
+
+/// 警告として目立たせる価値のある行の分類。
+/// backupd のエラー行の大半は、設定画面やメニューバーが状態を問い合わせるたびに出る
+/// 実害のない行 (connection invalid, fs_snapshot_list failed など) なので、ここに挙げた行だけを拾う。
+public enum Significance: Sendable, Equatable {
+    case writeTestFailed
+    case backupFailed(reason: String)
+    /// 実行中のバックアップがあるため、新しい開始要求を見送った。失敗ではない。
+    case requestDropped
+    case completed
+
+    public init?(_ entry: LogEntry) {
+        let m = entry.message
+        if entry.category == "IOCheck" && m.contains("Failed destination write test") {
+            self = .writeTestFailed
+        } else if m.hasPrefix("Backup failed") {
+            if m.contains("BACKUP_IN_PROGRESS_REQUEST_DROPPED") {
+                self = .requestDropped
+            } else {
+                let reason = m.dropFirst("Backup failed".count).trimmingCharacters(in: CharacterSet(charactersIn: ": "))
+                self = .backupFailed(reason: reason)
+            }
+        } else if m.contains("Backup canceled") {
+            self = .backupFailed(reason: "canceled")
+        } else if m.hasPrefix("Backup completed") {
+            self = .completed
+        } else {
+            return nil
+        }
+    }
+}

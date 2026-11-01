@@ -9,7 +9,7 @@ struct OverviewView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
-                if !warnings.isEmpty { noticesCard }
+                if !warnings.isEmpty || store.otherErrorCount > 0 { noticesCard }
                 currentActivity
                 propagation
                 breakdown
@@ -74,6 +74,10 @@ struct OverviewView: View {
                             .lineLimit(3)
                             .textSelection(.enabled)
                     }
+                }
+                if store.otherErrorCount > 0 {
+                    Text("このほかに backupd のエラー行が \(store.otherErrorCount) 件あり、ログタブの「エラーのみ」で確認できます。大半は設定画面やメニューバーが状態を問い合わせるたびに出る行で、バックアップの進みには影響しません。")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
         }
