@@ -79,7 +79,7 @@ public struct ItemRate: Identifiable, Sendable, Hashable {
         let sorted = samples.sorted { $0.date < $1.date }
         return zip(sorted, sorted.dropFirst()).compactMap { prev, next in
             let dt = next.date.timeIntervalSince(prev.date)
-            guard dt > 0, dt <= maxGap,
+            guard dt > 0, dt <= maxGap, prev.attempt == next.attempt,
                   let c0 = prev.copiedCount, let c1 = next.copiedCount,
                   let p0 = prev.propagatedCount, let p1 = next.propagatedCount,
                   c1 >= c0, p1 >= p0 else { return nil }

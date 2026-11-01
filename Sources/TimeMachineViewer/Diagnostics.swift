@@ -28,6 +28,40 @@ final class Diagnostics {
     /// ディスクイメージの読み書きは diskimagesiod が、バックアップ本体は backupd が行う。
     private let processes = ["diskimagesiod", "backupd"]
 
+    /// 生の記録の置き場所。一時フォルダは macOS が掃除してしまうので、Application Support に置く。
+    static let directory: URL = {
+        let dir = URL.applicationSupportDirectory.appendingPathComponent("TimeMachineViewer/diagnostics", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+
+    /// 以前に測った生の記録を読み直す。
+    func loadSaved() {
+        let dir = Self.directory
+        let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+        let saved = files.compactMap { url -> (Date, URL)? in
+            let name = url.deletingPathExtension().lastPathComponent
+            guard name.hasPrefix("fs_usage-"), let t = Double(name.dropFirst("fs_usage-".count)) else { return nil }
+            return (Date(timeIntervalSince1970: t), url)
+        }
+        .sorted { $0.0 > $1.0 }
+        .prefix(10)
+        Task.detached {
+            let loaded: [(Date, URL, FSUsageReport)] = saved.compactMap { date, url in
+                guard let data = try? Data(contentsOf: url) else { return nil }
+                let report = FSUsageReport.build(lines: String(decoding: data, as: UTF8.self).split(separator: "\n"), duration: 60)
+                return report.eventCount > 0 ? (date, url, report) : nil
+            }
+            await MainActor.run {
+                let known = Set(self.runs.map(\.rawFile))
+                self.runs += loaded.filter { !known.contains($0.1) }.map {
+                    Run(startedAt: $0.0, report: $0.2, rawFile: $0.1, smbRTTms: nil, itemsPerMinute: nil)
+                }
+                self.runs.sort { $0.startedAt > $1.startedAt }
+            }
+        }
+    }
+
     var isRunning: Bool {
         if case .running = state { return true }
         return false
@@ -36,8 +70,7 @@ final class Diagnostics {
     func start(store: MonitorStore) {
         guard !isRunning else { return }
         let startedAt = Date()
-        let file = FileManager.default.temporaryDirectory
-            .appendingPathComponent("fs_usage-\(Int(startedAt.timeIntervalSince1970)).txt")
+        let file = Self.directory.appendingPathComponent("fs_usage-\(Int(startedAt.timeIntervalSince1970)).txt")
         let command = "/usr/bin/fs_usage -w -f filesys -t \(seconds) \(processes.joined(separator: " ")) > '\(file.path)' 2>&1"
         let script = "do shell script \"\(command)\" with administrator privileges"
         state = .running(until: startedAt.addingTimeInterval(TimeInterval(seconds)))

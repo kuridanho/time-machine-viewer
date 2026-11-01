@@ -6,8 +6,13 @@ enum Format {
         return ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
     }
 
+    /// 速度はどこでも同じ書き方にそろえる (B/s, KB/s, MB/s, 1000 区切り)。
     static func byteRate(_ bytesPerSec: Double) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(bytesPerSec), countStyle: .file) + "/s"
+        switch bytesPerSec {
+        case ..<1_000: "\(Int(bytesPerSec.rounded())) B/s"
+        case ..<1_000_000: "\(Int((bytesPerSec / 1_000).rounded())) KB/s"
+        default: "\((bytesPerSec / 1_000_000).formatted(.number.precision(.fractionLength(1)))) MB/s"
+        }
     }
 
     static func count(_ value: Int?) -> String {

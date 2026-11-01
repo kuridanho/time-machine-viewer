@@ -12,7 +12,10 @@ struct TimeMachineViewerApp: App {
             ContentView()
                 .environment(store)
                 .environment(diagnostics)
-                .task { store.start() }
+                .task {
+                    store.start()
+                    diagnostics.loadSaved()
+                }
         }
         .defaultSize(width: 920, height: 680)
     }

@@ -20,6 +20,8 @@ public struct CopyProgressSample: Identifiable, Sendable, Hashable {
     /// バックアップ元に読み替えた、いま処理中のパス。
     public var currentPath: String?
     public var currentFileBytes: Int64?
+    /// 記録されたときの backupd の試行番号。試行が変わると件数が数え直される。
+    public var attempt: Int?
 
     public var processedItems: Int { (copiedCount ?? 0) + (propagatedCount ?? 0) }
     public var processedBytes: Int64 { (copiedBytes ?? 0) + (propagatedBytes ?? 0) }

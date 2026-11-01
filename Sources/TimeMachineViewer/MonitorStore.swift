@@ -64,6 +64,21 @@ final class MonitorStore {
         zip(smbSamples, smbSamples.dropFirst()).compactMap { SMBRate(from: $0, to: $1) }
     }
 
+    /// 約1分ごとにならした SMB の速さ。グラフとタイル用。
+    var smbMinuteRates: [SMBRate] {
+        var rates: [SMBRate] = []
+        var anchor: SMBConnectionSample?
+        for sample in smbSamples {
+            guard let a = anchor else { anchor = sample; continue }
+            if sample.connection != a.connection { anchor = sample; continue }
+            if sample.date.timeIntervalSince(a.date) >= 60 {
+                if let r = SMBRate(from: a, to: sample) { rates.append(r) }
+                anchor = sample
+            }
+        }
+        return rates
+    }
+
     /// 直近 `window` 秒の SMB の速さ。5秒ごとの揺れをならして、1分おきのログと見比べやすくする。
     func recentSMBRate(window: TimeInterval = 60) -> SMBRate? {
         guard let last = smbSamples.last,
@@ -136,7 +151,10 @@ final class MonitorStore {
 
         switch entry.category {
         case "CopyProgress":
-            if let s = CopyProgressSample.parse(entry.message, date: entry.date) { copySamples.append(s) }
+            if var s = CopyProgressSample.parse(entry.message, date: entry.date) {
+                s.attempt = attempt
+                copySamples.append(s)
+            }
         case "EventCollectionProgress":
             if let s = EventCollectionSample.parse(entry.message, date: entry.date) { eventSamples.append(s) }
         case "AttemptMapper":

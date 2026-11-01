@@ -1,13 +1,16 @@
 import SwiftUI
 
 struct ContentView: View {
+    /// 最後に開いていたタブを次の起動でも開く。
+    @AppStorage("selectedTab") private var selectedTab = "overview"
+
     var body: some View {
-        TabView {
-            Tab("概要", systemImage: "gauge.with.dots.needle.33percent") { OverviewView() }
-            Tab("ディレクトリ", systemImage: "folder") { DirectoryView() }
-            Tab("推移", systemImage: "chart.xyaxis.line") { TrendView() }
-            Tab("診断", systemImage: "stethoscope") { DiagnosticView() }
-            Tab("ログ", systemImage: "list.bullet.rectangle") { LogView() }
+        TabView(selection: $selectedTab) {
+            Tab("概要", systemImage: "gauge.with.dots.needle.33percent", value: "overview") { OverviewView() }
+            Tab("推移", systemImage: "chart.xyaxis.line", value: "trends") { TrendView() }
+            Tab("診断", systemImage: "stethoscope", value: "diagnostics") { DiagnosticView() }
+            Tab("ディレクトリ", systemImage: "folder", value: "directories") { DirectoryView() }
+            Tab("ログ", systemImage: "list.bullet.rectangle", value: "log") { LogView() }
         }
         .frame(minWidth: 760, minHeight: 540)
     }
