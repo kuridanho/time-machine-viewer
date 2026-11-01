@@ -158,3 +158,35 @@ let copyProgressMessage = """
     #expect(rate.inBytesPerSec == 900_000)
     #expect(rate.outBytesPerSec == 0)
 }
+
+// fs_usage は root でしか動かないので、man の書式どおりの行で確かめる。
+@Test func summarizesBandOpensFromFSUsage() throws {
+    let band = "/Volumes/.timemachine/NAS/UUID/Time Machine/Mac.sparsebundle/bands/1a3"
+    let lines = [
+        "16:31:02.100000  open              F=6        (R_____)  \(band)          0.101000 W diskimagesiod.1234567",
+        "16:31:02.201000  pread             F=6    B=0x800000  O=0x00000000          0.050000 W diskimagesiod.1234567",
+        "16:31:02.252000  close             F=6                                       0.020000 W diskimagesiod.1234567",
+        "16:31:02.300000  open              F=6        (RW____)  \(band)          0.099000 W diskimagesiod.1234567",
+        "16:31:02.400000  pwrite            F=6    B=0x1000    O=0x00001000          0.030000 W diskimagesiod.1234567",
+        "16:31:02.431000  close             F=6                                       0.010000   diskimagesiod.1234567",
+        "16:31:02.500000  getattrlist                    /Users/me/file.txt       0.000100   backupd.99",
+        "garbage line",
+    ]
+    let e = try #require(FSUsageEvent.parse(line: lines[0]))
+    #expect(e.call == "open")
+    #expect(e.fd == 6)
+    #expect(e.path == band)
+    #expect(e.elapsed == 0.101)
+    #expect(e.processName == "diskimagesiod")
+
+    let r = FSUsageReport.build(lines: lines, duration: 60)
+    #expect(r.eventCount == 7)
+    #expect(r.bandOpens.count == 2)
+    #expect(abs(r.bandOpens.average - 0.1) < 1e-9)
+    #expect(r.bandReads.count == 1)
+    #expect(r.bandWrites.count == 1)
+    #expect(r.bandCloses.count == 2)
+    #expect(r.distinctBands == 1)
+    #expect(r.opensPerReadWrite == 1)
+    #expect(r.processes == ["backupd", "diskimagesiod"])
+}

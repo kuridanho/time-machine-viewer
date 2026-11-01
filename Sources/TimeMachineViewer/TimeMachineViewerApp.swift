@@ -5,11 +5,13 @@ import SwiftUI
 struct TimeMachineViewerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var store = MonitorStore()
+    @State private var diagnostics = Diagnostics()
 
     var body: some Scene {
         Window("Time Machine Viewer", id: "main") {
             ContentView()
                 .environment(store)
+                .environment(diagnostics)
                 .task { store.start() }
         }
         .defaultSize(width: 920, height: 680)

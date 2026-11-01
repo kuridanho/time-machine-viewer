@@ -6,6 +6,7 @@ struct ContentView: View {
             Tab("概要", systemImage: "gauge.with.dots.needle.33percent") { OverviewView() }
             Tab("ディレクトリ", systemImage: "folder") { DirectoryView() }
             Tab("推移", systemImage: "chart.xyaxis.line") { TrendView() }
+            Tab("診断", systemImage: "stethoscope") { DiagnosticView() }
             Tab("ログ", systemImage: "list.bullet.rectangle") { LogView() }
         }
         .frame(minWidth: 760, minHeight: 540)
