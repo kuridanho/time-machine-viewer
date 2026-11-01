@@ -164,6 +164,7 @@ struct OverviewView: View {
                         Metric(label: "処理した項目のうち引き継ぎ", value: Format.percent(share))
                         Metric(label: "直近の伸び (引き継ぎ / 新規)",
                                value: rate.map { "\(Int($0.propagatedPerMinute)) / \(Int($0.copiedPerMinute)) 件/分" } ?? "—")
+                        Metric(label: "1件あたりの時間", value: rate.flatMap(msPerItem) ?? "—")
                     }
                     Text("引き継ぎは、変わっていない項目を前回のバックアップから付け替える処理で、データはほとんど送りません。新規コピーが少ない回は転送速度が低く見えますが、引き継ぎの件数が伸びていれば処理は進んでいます。")
                         .font(.caption).foregroundStyle(.secondary)
@@ -183,6 +184,13 @@ struct OverviewView: View {
                 }
             }
         }
+    }
+
+    /// 引き継ぎは1件ごとにバックアップ先へ問い合わせるので、1件の時間が先の応答の遅さをよく表す。
+    private func msPerItem(_ rate: ItemRate) -> String? {
+        let perMinute = rate.propagatedPerMinute + rate.copiedPerMinute
+        guard perMinute > 0 else { return nil }
+        return "\(Int((60_000 / perMinute).rounded())) ms"
     }
 
     private func gauge(_ label: String, _ percent: Int?) -> some View {
