@@ -116,7 +116,9 @@ public struct FSUsageReport: Sendable {
         for line in lines {
             guard let e = FSUsageEvent.parse(line: String(line)) else { continue }
             eventCount += 1
-            processes.insert(e.processName)
+            // fs_usage は指定外のプロセスのディスク I/O (RdData[...] など) も混ぜて出すので、
+            // 一覧にはファイル操作のシステムコールを出したプロセスだけを載せる。
+            if !e.call.contains("[") { processes.insert(e.processName) }
             var stat = calls[e.call] ?? CallStat(call: e.call, count: 0, totalSeconds: 0, maxSeconds: 0)
             add(&stat, e)
             calls[e.call] = stat
