@@ -7,6 +7,11 @@ public struct FSUsageEvent: Sendable, Hashable {
     public var bytes: Int?
     public var errno: Int?
     public var path: String?
+    /// fcntl の命令名。"<OPENFROM>" なら "OPENFROM"。
+    public var command: String?
+    /// fcntl(F_OPENFROM) で開いたときに返ったファイル記述子と、開いた名前。
+    public var openedFD: Int?
+    public var openedName: String?
     /// システムコールにかかった時間 (秒)。
     public var elapsed: Double
     public var process: String
@@ -18,7 +23,14 @@ public struct FSUsageEvent: Sendable, Hashable {
         return String(process[..<dot])
     }
 
-    public var isBand: Bool { path?.contains("bands/") == true }
+    /// diskimagesiod はバンドを open ではなく、bands ディレクトリを基点にした fcntl(F_OPENFROM) で開く。
+    public var isBandOpen: Bool {
+        if call.lowercased().hasPrefix("open") { return path?.contains("bands/") == true }
+        return call == "fcntl" && command == "OPENFROM" && processName == "diskimagesiod"
+    }
+
+    /// 開いた結果のファイル記述子。open は F=、fcntl(F_OPENFROM) は2つ目の F= が結果。
+    public var resultFD: Int? { command == "OPENFROM" ? openedFD : fd }
 
     public static func parse(line: String) -> FSUsageEvent? {
         guard let g = RX.groups(#"^\d{2}:\d{2}:\d{2}\.\d+\s+(\S+)\s+(.*?)\s+(\d+\.\d+)(?:\s+W)?\s+(\S+)\s*$"#, in: line),
@@ -29,6 +41,11 @@ public struct FSUsageEvent: Sendable, Hashable {
         e.fd = RX.groups(#"F=(\d+)"#, in: middle)?[1].flatMap { Int($0) }
         e.bytes = RX.groups(#"B=0x([0-9a-fA-F]+)"#, in: middle)?[1].flatMap { Int($0, radix: 16) }
         e.errno = RX.groups(#"\[\s*(\d+)\]"#, in: middle)?[1].flatMap { Int($0) }
+        e.command = RX.groups(#"<([A-Z_]+)>"#, in: middle)?[1]
+        if e.command == "OPENFROM", let g = RX.groups(#"<OPENFROM>\s+F=(\d+)\s+(\S+)"#, in: middle) {
+            e.openedFD = g[1].flatMap { Int($0) }
+            e.openedName = g[2]
+        }
         if let p = RX.groups(#"(?:^|\s)(/.*)$"#, in: middle)?[1] {
             e.path = p.trimmingCharacters(in: .whitespaces)
         }
@@ -61,8 +78,14 @@ public struct FSUsageReport: Sendable {
     public var bandReads: CallStat
     public var bandWrites: CallStat
     public var bandCloses: CallStat
+    public var bandSyncs: CallStat
     public var distinctBands: Int
     public var processes: [String]
+
+    /// バンドの開く、読む、書く、同期する、閉じるに費やした時間の合計。
+    public var bandTotalSeconds: Double {
+        [bandOpens, bandReads, bandWrites, bandSyncs, bandCloses].reduce(0) { $0 + $1.totalSeconds }
+    }
 
     public var bandOpensPerSecond: Double { duration > 0 ? Double(bandOpens.count) / duration : 0 }
     /// 読み書き1回あたりに何回バンドを開いているか。1に近ければ読み書きのたびに開き直している。
@@ -77,6 +100,7 @@ public struct FSUsageReport: Sendable {
         var bandRead = CallStat(call: "read", count: 0, totalSeconds: 0, maxSeconds: 0)
         var bandWrite = CallStat(call: "write", count: 0, totalSeconds: 0, maxSeconds: 0)
         var bandClose = CallStat(call: "close", count: 0, totalSeconds: 0, maxSeconds: 0)
+        var bandSync = CallStat(call: "fsync", count: 0, totalSeconds: 0, maxSeconds: 0)
         var bands = Set<String>()
         var processes = Set<String>()
         // read や write の行にはパスが出ないので、open で返ったファイル記述子からバンドを辿る。
@@ -99,12 +123,13 @@ public struct FSUsageReport: Sendable {
 
             let proc = e.processName
             let call = e.call.lowercased()
-            if call.hasPrefix("open") {
-                if e.isBand, let path = e.path {
-                    add(&bandOpen, e)
-                    bands.insert(path)
-                    if let fd = e.fd, e.errno == nil { openBands[proc, default: [:]][fd] = path }
-                }
+            if e.isBandOpen {
+                let name = e.path ?? e.openedName ?? "?"
+                add(&bandOpen, e)
+                bands.insert(name)
+                if let fd = e.resultFD, e.errno == nil { openBands[proc, default: [:]][fd] = name }
+            } else if call.hasPrefix("open") || e.command == "OPENFROM" {
+                continue
             } else if let fd = e.fd, openBands[proc]?[fd] != nil {
                 if call.hasPrefix("close") {
                     add(&bandClose, e)
@@ -113,6 +138,8 @@ public struct FSUsageReport: Sendable {
                     add(&bandRead, e)
                 } else if call.contains("write") {
                     add(&bandWrite, e)
+                } else if call.contains("fsync") || e.command == "FULLFSYNC" {
+                    add(&bandSync, e)
                 }
             }
         }
@@ -125,6 +152,7 @@ public struct FSUsageReport: Sendable {
             bandReads: bandRead,
             bandWrites: bandWrite,
             bandCloses: bandClose,
+            bandSyncs: bandSync,
             distinctBands: bands.count,
             processes: processes.sorted()
         )
@@ -141,12 +169,16 @@ public struct FSUsageReport: Sendable {
                 + "avg \(ms(bandOpens.average)), max \(ms(bandOpens.maxSeconds)), distinct bands \(distinctBands)",
             "Band reads: \(bandReads.count), avg \(ms(bandReads.average)); "
                 + "band writes: \(bandWrites.count), avg \(ms(bandWrites.average)); "
-                + "band closes: \(bandCloses.count), avg \(ms(bandCloses.average))",
+                + "band closes: \(bandCloses.count), avg \(ms(bandCloses.average)); "
+                + "band fsyncs: \(bandSyncs.count), avg \(ms(bandSyncs.average))",
+            "Bands are opened by diskimagesiod via fcntl(F_OPENFROM) relative to the bands directory.",
         ]
         if let r = opensPerReadWrite {
             lines.append("Opens per band read/write: \(String(format: "%.2f", r))")
         }
-        lines.append("Total time spent in band open(): \(String(format: "%.1f", bandOpens.totalSeconds)) s")
+        lines.append("Time in band open / read / write / fsync / close: "
+            + [bandOpens, bandReads, bandWrites, bandSyncs, bandCloses]
+                .map { String(format: "%.1f", $0.totalSeconds) }.joined(separator: " / ") + " s")
         if let smbRTTms { lines.append("SMB TCP RTT (nettop): \(String(format: "%.1f", smbRTTms)) ms") }
         if let itemsPerMinute { lines.append("backupd items processed: \(Int(itemsPerMinute)) per minute") }
         lines.append("")

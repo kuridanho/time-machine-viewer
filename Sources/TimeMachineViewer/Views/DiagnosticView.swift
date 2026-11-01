@@ -58,12 +58,13 @@ private struct RunCard: View {
                     Metric(label: "open に費やした時間の合計", value: Format.duration(r.bandOpens.totalSeconds))
                 }
                 HStack(alignment: .top, spacing: 28) {
-                    Metric(label: "バンドの読み / 書き", value: "\(r.bandReads.count) 回 / \(r.bandWrites.count) 回")
+                    Metric(label: "バンドの読み / 書き (平均)", value: "\(r.bandReads.count) 回 \(ms(r.bandReads.average)) / \(r.bandWrites.count) 回 \(ms(r.bandWrites.average))")
+                    Metric(label: "同期 / 閉じる (平均)", value: "\(ms(r.bandSyncs.average)) / \(ms(r.bandCloses.average))")
                     Metric(label: "読み書き1回あたりの open", value: r.opensPerReadWrite.map { $0.formatted(.number.precision(.fractionLength(2))) } ?? "—")
                     Metric(label: "触れたバンドの数", value: "\(r.distinctBands)")
                 }
-                if let ratio = r.opensPerReadWrite, ratio >= 0.5 {
-                    Text("読み書き1回につき \(ratio.formatted(.number.precision(.fractionLength(2)))) 回バンドを開いています。1に近いほど、読み書きのたびにバンドを開き直していることになります。")
+                if let ratio = r.opensPerReadWrite {
+                    Text("読み書き1回につき \(ratio.formatted(.number.precision(.fractionLength(2)))) 回バンドを開いています。1に近いほど、読み書きのたびにバンドを開き直していることになります。複数のスレッドが同時に待つため、各操作の時間の合計は記録した \(Int(r.duration)) 秒を超えることがあります。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
 

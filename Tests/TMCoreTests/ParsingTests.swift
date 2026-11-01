@@ -190,3 +190,29 @@ let copyProgressMessage = """
     #expect(r.opensPerReadWrite == 1)
     #expect(r.processes == ["backupd", "diskimagesiod"])
 }
+
+// 実機 (macOS 27.2) の fs_usage の出力。diskimagesiod は bands ディレクトリを基点に fcntl(F_OPENFROM) で開く。
+@Test func summarizesRealFSUsageLines() {
+    let lines = [
+        "16:32:39.755430  fcntl             F=5    <OPENFROM>  F=47  78d                0.589662 W diskimagesiod.369219",
+        "16:32:39.866684  fstat64           F=47                                        0.111248 W diskimagesiod.369219",
+        "16:32:39.900000  pwrite            F=47   B=0x1000     O=0x00078d000           0.056409 W diskimagesiod.369219",
+        "16:32:39.966688  fcntl             F=47   <FULLFSYNC>                          0.123676 W diskimagesiod.369219",
+        "16:32:40.631447  close             F=47                                        0.936574 W diskimagesiod.369219",
+    ]
+    let r = FSUsageReport.build(lines: lines, duration: 60)
+    #expect(r.bandOpens.count == 1)
+    #expect(r.bandOpens.maxSeconds == 0.589662)
+    #expect(r.bandWrites.count == 1)
+    #expect(r.bandSyncs.count == 1)
+    #expect(r.bandCloses.count == 1)
+    #expect(r.opensPerReadWrite == 1)
+}
+
+/// 手元の生の記録で集計を確かめる: TM_FSUSAGE_FILE=… swift test --filter printsSummaryOfLocalFile
+@Test func printsSummaryOfLocalFile() throws {
+    guard let path = ProcessInfo.processInfo.environment["TM_FSUSAGE_FILE"] else { return }
+    let text = String(decoding: try Data(contentsOf: URL(fileURLWithPath: path)), as: UTF8.self)
+    let r = FSUsageReport.build(lines: text.split(separator: "\n"), duration: 60)
+    print(r.englishSummary(osVersion: "local", smbRTTms: nil, itemsPerMinute: nil))
+}

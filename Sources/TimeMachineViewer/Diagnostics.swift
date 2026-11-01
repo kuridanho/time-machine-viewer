@@ -49,10 +49,12 @@ final class Diagnostics {
                 state = .failed(error)
                 return
             }
-            guard let text = try? String(contentsOf: file, encoding: .utf8) else {
+            // fs_usage はパスを途中で切るので、多バイト文字が割れて UTF-8 として正しくない行が混じる。
+            guard let data = try? Data(contentsOf: file) else {
                 state = .failed("記録を読めませんでした: \(file.path)")
                 return
             }
+            let text = String(decoding: data, as: UTF8.self)
             let report = FSUsageReport.build(lines: text.split(separator: "\n"), duration: TimeInterval(seconds))
             let recentRates = store.itemRates.filter { $0.date >= startedAt.addingTimeInterval(-60) }
             let itemsPerMinute = recentRates.isEmpty ? nil
