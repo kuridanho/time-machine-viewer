@@ -1,0 +1,109 @@
+import Foundation
+import Testing
+@testable import TMCore
+
+// 実機 (macOS 27.2) の backupd が出したログをそのまま使う。
+let copyProgressMessage = """
+.••        .
+\tProgress: 22% done, 1.54%/h, 0.15 MB/s, avg: 0.05 MB/s, 2.09 items/s, avg: 2.76 items/s
+\t\tByPhysicalSize:3% (CV:9.06 GB/276.98 GB (D: Zero KB),T:276.98 GB,D:Zero KB(-),LA:Zero KB(-))Y
+\t\tByItemCount:7% (CV:159753/2389997 (D: 0),T:2389997,D:0(-),LA:0(-))Y
+\t\tByEventPath:56% (C:56%LA:-)Y
+\tCopied: 405 (l:36.8 MB p:45.2 MB) Propagated: 159410 (l:12.43 GB p:9.01 GB) Propagated (shallow): 2254 (l:Zero KB p:Zero KB)
+\tTracker: FlCp:161DrCp:180SmCp:62FlMvSk:1774DrMvSk:480FlDltCp:2
+\tBackup Projected Stats: 2389997 items (p:276.98 GB)
+\tCurrent: Zero KB/(l:2 MB,p:2 MB) - /Volumes/Macbook Air M5のバックアップ 2/2026-11-01-131841.inprogress/Data/private/var/db/diagnostics/Special/0000000000001c38.tracev3
+"""
+
+@Test func parsesCopyProgress() throws {
+    let s = try #require(CopyProgressSample.parse(copyProgressMessage, date: .now))
+    #expect(s.percent == 22)
+    #expect(s.percentPerHour == 1.54)
+    #expect(s.mbPerSec == 0.15)
+    #expect(s.avgMBPerSec == 0.05)
+    #expect(s.avgItemsPerSec == 2.76)
+    #expect(s.byPhysicalSize == 3)
+    #expect(s.byItemCount == 7)
+    #expect(s.byEventPath == 56)
+    #expect(s.copiedCount == 405)
+    #expect(s.copiedBytes == 45_200_000)
+    #expect(s.propagatedCount == 159_410)
+    #expect(s.propagatedBytes == 9_010_000_000)
+    #expect(s.currentFileBytes == 2_000_000)
+    #expect(s.currentPath == "/private/var/db/diagnostics/Special/0000000000001c38.tracev3")
+}
+
+@Test func parsesCopyProgressWithoutRates() throws {
+    let message = """
+    \tProgress: 4% done, -, - MB/s, avg: 0.00 MB/s, - items/s, avg: 0.00 items/s
+    \tCurrent: Zero KB/(l:Zero KB,p:Zero KB) - /Volumes/B/2026-11-01-131556.inprogress/Data/Users/me/Library/Sharing
+    """
+    let s = try #require(CopyProgressSample.parse(message, date: .now))
+    #expect(s.percent == 4)
+    #expect(s.percentPerHour == nil)
+    #expect(s.mbPerSec == nil)
+    #expect(s.avgMBPerSec == 0)
+    #expect(s.currentPath == "/Users/me/Library/Sharing")
+}
+
+@Test func parsesEventCollectionProgress() throws {
+    let message = """
+    3001 (-):
+    \t- - "Data" 45% : ByCountedEvents:-,0,0/0,ByFileIDConvergence:-,0,ByCreatedFileIDCount:-,0
+    \t\tSpeed: 987.69 events/s Average: 620.27 events/s
+    \t\tCurrent: "Users/me/Library/Caches"
+    """
+    let s = try #require(EventCollectionSample.parse(message, date: .now))
+    #expect(s.volume == "Data")
+    #expect(s.percent == 45)
+    #expect(s.eventsPerSec == 987.69)
+    #expect(s.currentPath == "/Users/me/Library/Caches")
+}
+
+@Test func parsesNdjsonLine() throws {
+    let line = #"{"messageType":"Info","category":"CopyProgress","processImagePath":"\/System\/Library\/CoreServices\/TimeMachine\/backupd","timestamp":"2026-11-01 13:35:57.879523+0900","eventMessage":"hello"}"#
+    let e = try #require(LogEntry.decode(line: line))
+    #expect(e.level == .info)
+    #expect(e.process == "backupd")
+    #expect(e.category == "CopyProgress")
+    #expect(LogEntry.decode(line: #"{"count":2,"finished":1}"#) == nil)
+}
+
+@Test func parsesSizes() {
+    #expect(ByteSize.parse("Zero KB") == 0)
+    #expect(ByteSize.parse("845 bytes") == 845)
+    #expect(ByteSize.parse("13.09 GB") == 13_090_000_000)
+    #expect(ByteSize.parse("1,024 KB") == 1_024_000)
+}
+
+@Test func mapsDestinationPathToSource() {
+    #expect(PathMapping.sourcePath(fromDestinationPath: "/Volumes/X/2026.inprogress/Data/Users/a") == "/Users/a")
+    #expect(PathMapping.sourcePath(fromDestinationPath: "/Volumes/X/2026.inprogress/Ext/Photos") == "/Volumes/Ext/Photos")
+}
+
+@Test func attributesDwellTimeToDirectories() {
+    func sample(_ minute: Double, _ path: String, items: Int) -> CopyProgressSample {
+        var s = CopyProgressSample(date: Date(timeIntervalSince1970: minute * 60))
+        s.currentPath = path
+        s.copiedCount = items
+        return s
+    }
+    let samples = [
+        sample(0, "/Users/me/Library/Caches/a", items: 0),
+        sample(1, "/Users/me/Library/Caches/b", items: 10),
+        sample(5, "/Users/me/Documents/x", items: 12),
+        sample(6, "/Users/me/Documents/y", items: 50),
+        sample(60, "/private/var/db/z", items: 60),  // 間が空いた記録は数えない
+    ]
+    let stats = DirectoryAnalysis.dwell(samples: samples, depth: 4)
+    #expect(stats.first?.path == "/Users/me/Library/Caches")
+    #expect(stats.first?.seconds == 300)
+    #expect(stats.first?.items == 12)
+    #expect(stats.first(where: { $0.path == "/Users/me/Documents" })?.seconds == 60)
+    #expect(stats.contains(where: { $0.path.hasPrefix("/private") }) == false)
+
+    let since = DirectoryAnalysis.unchangedSince(Array(samples.prefix(2))) {
+        $0.currentPath.map { DirectoryAnalysis.prefix(of: $0, depth: 4) }
+    }
+    #expect(since == Date(timeIntervalSince1970: 0))
+}
