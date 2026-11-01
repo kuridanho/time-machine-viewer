@@ -69,7 +69,8 @@ struct OverviewView: View {
 
     private var tiles: some View {
         let rates = store.itemRates.suffix(60)
-        let rate = rates.last
+        // コピー以外の段階では件数の記録が止まるので、古い値は出さない。
+        let rate = rates.last.flatMap { store.now.timeIntervalSince($0.date) < 180 ? $0 : nil }
         let perItem = rate.flatMap(Self.msPerItem)
         let smb = store.recentSMBRate()
         let rtt = store.latestSMB?.rttMilliseconds
@@ -111,7 +112,7 @@ struct OverviewView: View {
 
     /// タイルの数字を一文で読み解く。
     private var interpretation: String? {
-        guard let rate = store.itemRates.last, let perItem = Self.msPerItem(rate),
+        guard let rate = store.itemRates.last, store.now.timeIntervalSince(rate.date) < 180, let perItem = Self.msPerItem(rate),
               let rtt = store.latestSMB?.rttMilliseconds, rtt > 0 else { return nil }
         let times = Int((perItem / rtt).rounded())
         guard times >= 5 else { return nil }
@@ -122,7 +123,25 @@ struct OverviewView: View {
 
     @ViewBuilder
     private var currentActivity: some View {
-        if store.status?.phase == "FindingChanges", let event = store.latestEvent {
+        if store.status?.phase?.contains("Thinning") == true {
+            Card(title: "整理の記録") {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let last = store.thinningEntries.last {
+                        Metric(label: "最後の記録から", value: Format.duration(store.now.timeIntervalSince(last.date)))
+                    }
+                    ForEach(store.thinningEntries.suffix(6).reversed()) { e in
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Text(Format.time(e.date)).monospacedDigit().foregroundStyle(.secondary)
+                            Text(e.message.split(separator: "\n").first.map(String.init) ?? e.message)
+                                .font(.caption.monospaced()).lineLimit(2).truncationMode(.middle)
+                                .help(e.message)
+                        }
+                    }
+                    Text("backupd は整理中の進み具合を記録しません。中断したバックアップを1件消すたびに一行出るだけなので、間が空いても止まっているとは限りません。消す速さは NAS の応答に左右されるため、診断で測ると待ちの様子が分かります。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        } else if store.status?.phase == "FindingChanges", let event = store.latestEvent {
             Card(title: "変更を検出している場所") {
                 VStack(alignment: .leading, spacing: 10) {
                     PathText(path: event.currentPath ?? "—")

@@ -23,6 +23,8 @@ final class MonitorStore {
     private(set) var notices: [Notice] = []
     /// 前回のバックアップの引き継ぎや構造の作り直しに関する記録。
     private(set) var structureEntries: [LogEntry] = []
+    /// 古いバックアップや中断したバックアップを消す段階の記録。
+    private(set) var thinningEntries: [LogEntry] = []
     private(set) var attempt: Int?
     /// 警告として拾わなかったエラー行の数。大半は状態の問い合わせに伴う実害のない行。
     private(set) var otherErrorCount = 0
@@ -161,6 +163,10 @@ final class MonitorStore {
             if let n = firstInt(after: "Current Attempt: #", in: entry.message) { attempt = n }
         case "TMStructure", "PropagationLookAheads":
             structureEntries.append(entry)
+        case "BackupThinning", "LocalThinning":
+            thinningEntries.append(entry)
+        case "General" where entry.message.contains("incomplete backups"):
+            thinningEntries.append(entry)
         default:
             break
         }
