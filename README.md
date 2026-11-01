@@ -20,4 +20,5 @@ Xcode 16 以降と macOS 15 以降が必要です。
 swift test               # 解析部のテスト
 swift run                # そのまま起動
 ./scripts/bundle.sh      # build/Time Machine Viewer.app を作る
+swift scripts/make-icon.swift   # アイコン (Resources/AppIcon.icns) を描き直す
 ```
