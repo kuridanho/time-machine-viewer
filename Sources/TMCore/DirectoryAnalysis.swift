@@ -66,3 +66,26 @@ public enum DirectoryAnalysis {
         return since
     }
 }
+
+/// 隣り合う進捗の記録から、新規コピーと引き継ぎ (Propagated) の件数の伸びを出す。
+/// 新規コピーがほとんどなく引き継ぎだけが進む回では、MB/s だけ見ると止まっているように見えるため。
+public struct ItemRate: Identifiable, Sendable, Hashable {
+    public var id: Date { date }
+    public var date: Date
+    public var copiedPerMinute: Double
+    public var propagatedPerMinute: Double
+
+    public static func intervals(_ samples: [CopyProgressSample], maxGap: TimeInterval = 15 * 60) -> [ItemRate] {
+        let sorted = samples.sorted { $0.date < $1.date }
+        return zip(sorted, sorted.dropFirst()).compactMap { prev, next in
+            let dt = next.date.timeIntervalSince(prev.date)
+            guard dt > 0, dt <= maxGap,
+                  let c0 = prev.copiedCount, let c1 = next.copiedCount,
+                  let p0 = prev.propagatedCount, let p1 = next.propagatedCount,
+                  c1 >= c0, p1 >= p0 else { return nil }
+            return ItemRate(date: next.date,
+                            copiedPerMinute: Double(c1 - c0) * 60 / dt,
+                            propagatedPerMinute: Double(p1 - p0) * 60 / dt)
+        }
+    }
+}

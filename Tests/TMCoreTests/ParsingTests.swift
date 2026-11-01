@@ -107,3 +107,22 @@ let copyProgressMessage = """
     }
     #expect(since == Date(timeIntervalSince1970: 0))
 }
+
+@Test func computesCopiedAndPropagatedRates() {
+    func sample(_ minute: Double, copied: Int, propagated: Int) -> CopyProgressSample {
+        var s = CopyProgressSample(date: Date(timeIntervalSince1970: minute * 60))
+        s.copiedCount = copied
+        s.propagatedCount = propagated
+        return s
+    }
+    let rates = ItemRate.intervals([
+        sample(0, copied: 400, propagated: 159_000),
+        sample(2, copied: 410, propagated: 161_000),
+        sample(3, copied: 0, propagated: 0),  // 新しい試行で数え直した記録は飛ばす
+        sample(4, copied: 5, propagated: 600),
+    ])
+    #expect(rates.count == 2)
+    #expect(rates[0].copiedPerMinute == 5)
+    #expect(rates[0].propagatedPerMinute == 1000)
+    #expect(rates[1].propagatedPerMinute == 600)
+}

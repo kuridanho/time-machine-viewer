@@ -21,6 +21,8 @@ final class MonitorStore {
     private(set) var eventSamples: [EventCollectionSample] = []
     private(set) var entries: [LogEntry] = []
     private(set) var notices: [Notice] = []
+    /// 前回のバックアップの引き継ぎや構造の作り直しに関する記録。
+    private(set) var structureEntries: [LogEntry] = []
     private(set) var attempt: Int?
     private(set) var logConnected = false
     /// 経過時間の表示を毎秒更新するための現在時刻。
@@ -49,6 +51,7 @@ final class MonitorStore {
 
     var latestCopy: CopyProgressSample? { copySamples.last }
     var latestEvent: EventCollectionSample? { eventSamples.last }
+    var itemRates: [ItemRate] { ItemRate.intervals(copySamples) }
 
     var directoryStats: [DirectoryStat] {
         DirectoryAnalysis.dwell(samples: copySamples, depth: dwellDepth, now: status?.running == true ? now : nil)
@@ -108,6 +111,8 @@ final class MonitorStore {
             if let s = EventCollectionSample.parse(entry.message, date: entry.date) { eventSamples.append(s) }
         case "AttemptMapper":
             if let n = firstInt(after: "Current Attempt: #", in: entry.message) { attempt = n }
+        case "TMStructure", "PropagationLookAheads":
+            structureEntries.append(entry)
         case "IOCheck" where entry.message.contains("Failed"):
             addNotice(entry, .warning, "バックアップ先への書き込みテストに失敗しました")
         default:

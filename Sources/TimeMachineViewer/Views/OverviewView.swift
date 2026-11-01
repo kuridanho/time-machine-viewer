@@ -11,6 +11,7 @@ struct OverviewView: View {
                 header
                 if !warnings.isEmpty { noticesCard }
                 currentActivity
+                propagation
                 breakdown
             }
             .padding(20)
@@ -138,9 +139,46 @@ struct OverviewView: View {
                         Metric(label: "1時間あたりの進み", value: s.percentPerHour.map { "\($0.formatted())%" } ?? "—")
                     }
                     GridRow {
-                        Metric(label: "転送速度 (直近 / 平均)", value: "\(Format.rate(s.mbPerSec, unit: "MB/s")) / \(Format.rate(s.avgMBPerSec, unit: "MB/s"))")
+                        Metric(label: "新規コピーの転送速度 (直近 / 平均)", value: "\(Format.rate(s.mbPerSec, unit: "MB/s")) / \(Format.rate(s.avgMBPerSec, unit: "MB/s"))")
                         Metric(label: "処理速度 (直近 / 平均)", value: "\(Format.rate(s.itemsPerSec, unit: "件/秒")) / \(Format.rate(s.avgItemsPerSec, unit: "件/秒"))")
                         Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: 引き継ぎ
+
+    @ViewBuilder
+    private var propagation: some View {
+        if let s = store.latestCopy, s.propagatedCount != nil {
+            let processed = s.processedItems
+            let share = processed > 0 ? Double(s.propagatedCount ?? 0) / Double(processed) : nil
+            let rate = store.itemRates.last
+            Card(title: "前回のバックアップからの引き継ぎ") {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .top, spacing: 28) {
+                        Metric(label: "引き継いだ項目", value: "\(Format.count(s.propagatedCount)) 件")
+                        Metric(label: "引き継いだ容量", value: Format.bytes(s.propagatedBytes))
+                        Metric(label: "処理した項目のうち引き継ぎ", value: Format.percent(share))
+                        Metric(label: "直近の伸び (引き継ぎ / 新規)",
+                               value: rate.map { "\(Int($0.propagatedPerMinute)) / \(Int($0.copiedPerMinute)) 件/分" } ?? "—")
+                    }
+                    Text("引き継ぎは、変わっていない項目を前回のバックアップから付け替える処理で、データはほとんど送りません。新規コピーが少ない回は転送速度が低く見えますが、引き継ぎの件数が伸びていれば処理は進んでいます。")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if !store.structureEntries.isEmpty {
+                        Divider()
+                        ForEach(store.structureEntries.suffix(6).reversed()) { e in
+                            HStack(alignment: .top, spacing: 10) {
+                                Text(Format.time(e.date)).monospacedDigit().foregroundStyle(.secondary)
+                                Text(e.category).foregroundStyle(.secondary).frame(width: 160, alignment: .leading)
+                                Text((e.message.removingPercentEncoding ?? e.message).trimmingCharacters(in: .whitespacesAndNewlines))
+                                    .font(.caption.monospaced())
+                                    .lineLimit(2)
+                                    .textSelection(.enabled)
+                            }
+                        }
                     }
                 }
             }

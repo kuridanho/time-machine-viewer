@@ -12,7 +12,16 @@ struct TrendView: View {
                 if samples.isEmpty {
                     Text("まだ進捗の記録がありません。").foregroundStyle(.secondary)
                 }
-                Card(title: "転送速度 (MB/s)") {
+                Card(title: "処理した項目の伸び (件/分)") {
+                    Chart(store.itemRates) { r in
+                        LineMark(x: .value("時刻", r.date), y: .value("件/分", r.propagatedPerMinute), series: .value("系列", "引き継ぎ"))
+                            .foregroundStyle(by: .value("系列", "引き継ぎ"))
+                        LineMark(x: .value("時刻", r.date), y: .value("件/分", r.copiedPerMinute), series: .value("系列", "新規コピー"))
+                            .foregroundStyle(by: .value("系列", "新規コピー"))
+                    }
+                    .frame(height: 180)
+                }
+                Card(title: "新規コピーの転送速度 (MB/s)") {
                     Chart(samples) { s in
                         if let v = s.mbPerSec {
                             LineMark(x: .value("時刻", s.date), y: .value("MB/s", v), series: .value("系列", "直近"))
