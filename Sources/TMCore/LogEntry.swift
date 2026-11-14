@@ -29,6 +29,7 @@ public struct LogEntry: Identifiable, Sendable, Hashable {
         let eventMessage: String?
     }
 
+    private static let formatterLock = NSLock()
     private static let timestampFormatter: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
@@ -36,11 +37,17 @@ public struct LogEntry: Identifiable, Sendable, Hashable {
         return f
     }()
 
+    private static func parseTimestamp(_ text: String) -> Date? {
+        formatterLock.lock()
+        defer { formatterLock.unlock() }
+        return timestampFormatter.date(from: text)
+    }
+
     /// ndjson の一行を読む。JSON でない行 (先頭の案内文や末尾の件数) は nil。
     public static func decode(line: some StringProtocol) -> LogEntry? {
         guard line.first == "{", let data = String(line).data(using: .utf8),
               let raw = try? JSONDecoder().decode(Raw.self, from: data),
-              let ts = raw.timestamp, let date = timestampFormatter.date(from: ts),
+              let ts = raw.timestamp, let date = parseTimestamp(ts),
               let message = raw.eventMessage else { return nil }
         return LogEntry(
             date: date,

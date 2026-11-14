@@ -38,6 +38,7 @@ final class Diagnostics {
     /// 以前に測った生の記録を読み直す。
     func loadSaved() {
         let dir = Self.directory
+        let duration = TimeInterval(seconds)
         let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
         let saved = files.compactMap { url -> (Date, URL)? in
             let name = url.deletingPathExtension().lastPathComponent
@@ -49,7 +50,7 @@ final class Diagnostics {
         Task.detached {
             let loaded: [(Date, URL, FSUsageReport)] = saved.compactMap { date, url in
                 guard let data = try? Data(contentsOf: url) else { return nil }
-                let report = FSUsageReport.build(lines: String(decoding: data, as: UTF8.self).split(separator: "\n"), duration: 60)
+                let report = FSUsageReport.build(lines: String(decoding: data, as: UTF8.self).split(separator: "\n"), duration: duration)
                 return report.eventCount > 0 ? (date, url, report) : nil
             }
             await MainActor.run {
@@ -71,8 +72,8 @@ final class Diagnostics {
         guard !isRunning else { return }
         let startedAt = Date()
         let file = Self.directory.appendingPathComponent("fs_usage-\(Int(startedAt.timeIntervalSince1970)).txt")
-        let command = "/usr/bin/fs_usage -w -f filesys -t \(seconds) \(processes.joined(separator: " ")) > '\(file.path)' 2>&1"
-        let script = "do shell script \"\(command)\" with administrator privileges"
+        let command = "/usr/bin/fs_usage -w -f filesys -t \(seconds) \(processes.joined(separator: " ")) > \(Self.shellQuoted(file.path)) 2>&1"
+        let script = "do shell script \(Self.appleScriptString(command)) with administrator privileges"
         state = .running(until: startedAt.addingTimeInterval(TimeInterval(seconds)))
 
         Task {
@@ -98,6 +99,17 @@ final class Diagnostics {
                 ? .failed("記録が空でした。バックアップが動いていないか、fs_usage の出力形式が想定と違う可能性があります。")
                 : .idle
         }
+    }
+
+    private static func shellQuoted(_ text: String) -> String {
+        "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    private static func appleScriptString(_ text: String) -> String {
+        let escaped = text
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"\(escaped)\""
     }
 
     /// 成功なら nil、失敗ならその説明。

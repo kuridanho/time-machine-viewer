@@ -31,6 +31,9 @@ final class MonitorStore {
     private(set) var logConnected = false
     /// NAS との SMB 接続の累計値。5秒おきに読む。
     private(set) var smbSamples: [SMBConnectionSample] = []
+    private(set) var itemRates: [ItemRate] = []
+    /// 約1分ごとにならした SMB の速さ。グラフとタイル用。
+    private(set) var smbMinuteRates: [SMBRate] = []
     /// 経過時間の表示を毎秒更新するための現在時刻。
     private(set) var now = Date()
 
@@ -38,6 +41,10 @@ final class MonitorStore {
 
     private var started = false
     private let maxEntries = 3000
+    private let maxCopySamples = 2000
+    private let maxEventSamples = 1000
+    private let maxAuxEntries = 500
+    private let maxNotices = 200
 
     func start() {
         guard !started else { return }
@@ -58,7 +65,6 @@ final class MonitorStore {
 
     var latestCopy: CopyProgressSample? { copySamples.last }
     var latestEvent: EventCollectionSample? { eventSamples.last }
-    var itemRates: [ItemRate] { ItemRate.intervals(copySamples) }
     var latestSMB: SMBConnectionSample? { smbSamples.last }
 
     /// 5秒おきの区間ごとの SMB の速さ。グラフ用。
@@ -66,11 +72,10 @@ final class MonitorStore {
         zip(smbSamples, smbSamples.dropFirst()).compactMap { SMBRate(from: $0, to: $1) }
     }
 
-    /// 約1分ごとにならした SMB の速さ。グラフとタイル用。
-    var smbMinuteRates: [SMBRate] {
+    private static func computeSMBMinuteRates(_ samples: [SMBConnectionSample]) -> [SMBRate] {
         var rates: [SMBRate] = []
         var anchor: SMBConnectionSample?
-        for sample in smbSamples {
+        for sample in samples {
             guard let a = anchor else { anchor = sample; continue }
             if sample.connection != a.connection { anchor = sample; continue }
             if sample.date.timeIntervalSince(a.date) >= 60 {
@@ -123,9 +128,9 @@ final class MonitorStore {
     private func pollSMB() async {
         while !Task.isCancelled {
             if let sample = try? await TMCommands.smbConnection() {
-                smbSamples.append(sample)
                 // 5秒おきで約3時間分を残す。
-                if smbSamples.count > 2200 { smbSamples.removeFirst(smbSamples.count - 2200) }
+                appendBounded(sample, to: &smbSamples, limit: 2200)
+                smbMinuteRates = Self.computeSMBMinuteRates(smbSamples)
             }
             try? await Task.sleep(for: .seconds(5))
         }
@@ -133,7 +138,8 @@ final class MonitorStore {
 
     private func followLog() async {
         if let history = try? await TMCommands.recentLog() {
-            history.forEach(ingest)
+            history.forEach { ingest($0, recomputeRates: false) }
+            itemRates = ItemRate.intervals(copySamples)
         }
         while !Task.isCancelled {
             logConnected = true
@@ -146,27 +152,29 @@ final class MonitorStore {
         }
     }
 
-    private func ingest(_ entry: LogEntry) {
+    private func ingest(_ entry: LogEntry, recomputeRates: Bool = true) {
         guard !entry.isNoise else { return }
-        entries.append(entry)
-        if entries.count > maxEntries { entries.removeFirst(entries.count - maxEntries) }
+        appendBounded(entry, to: &entries, limit: maxEntries)
 
         switch entry.category {
         case "CopyProgress":
             if var s = CopyProgressSample.parse(entry.message, date: entry.date) {
                 s.attempt = attempt
-                copySamples.append(s)
+                appendBounded(s, to: &copySamples, limit: maxCopySamples)
+                if recomputeRates { itemRates = ItemRate.intervals(copySamples) }
             }
         case "EventCollectionProgress":
-            if let s = EventCollectionSample.parse(entry.message, date: entry.date) { eventSamples.append(s) }
+            if let s = EventCollectionSample.parse(entry.message, date: entry.date) {
+                appendBounded(s, to: &eventSamples, limit: maxEventSamples)
+            }
         case "AttemptMapper":
             if let n = firstInt(after: "Current Attempt: #", in: entry.message) { attempt = n }
         case "TMStructure", "PropagationLookAheads":
-            structureEntries.append(entry)
+            appendBounded(entry, to: &structureEntries, limit: maxAuxEntries)
         case "BackupThinning", "LocalThinning":
-            thinningEntries.append(entry)
+            appendBounded(entry, to: &thinningEntries, limit: maxAuxEntries)
         case "General" where entry.message.contains("incomplete backups"):
-            thinningEntries.append(entry)
+            appendBounded(entry, to: &thinningEntries, limit: maxAuxEntries)
         default:
             break
         }
@@ -191,8 +199,14 @@ final class MonitorStore {
             notices[i].count += 1
             notices[i].date = entry.date
         } else {
-            notices.append(Notice(date: entry.date, severity: severity, title: title, detail: detail))
+            appendBounded(Notice(date: entry.date, severity: severity, title: title, detail: detail),
+                          to: &notices, limit: maxNotices)
         }
+    }
+
+    private func appendBounded<T>(_ element: T, to array: inout [T], limit: Int) {
+        array.append(element)
+        if array.count > limit { array.removeFirst(array.count - limit) }
     }
 
     private func firstInt(after marker: String, in text: String) -> Int? {

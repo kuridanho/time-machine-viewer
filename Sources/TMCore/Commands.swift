@@ -1,5 +1,17 @@
 import Foundation
 
+public enum CommandError: LocalizedError, Sendable, Equatable {
+    case nonZeroExit(command: String, status: Int32, stderr: String)
+
+    public var errorDescription: String? {
+        switch self {
+        case let .nonZeroExit(command, status, stderr):
+            let detail = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            return detail.isEmpty ? "\(command) が終了コード \(status) で失敗しました" : detail
+        }
+    }
+}
+
 /// tmutil と log を呼び出す窓口。どちらも管理者権限なしで動く。
 public enum TMCommands {
     public static let logPredicate = #"subsystem == "com.apple.TimeMachine" AND category != "LogLimits""#
@@ -28,6 +40,11 @@ public enum TMCommands {
             box.process.standardOutput = pipe
             box.process.standardError = FileHandle.nullDevice
 
+            do { try box.process.run() } catch {
+                continuation.finish()
+                return
+            }
+
             let reader = Task.detached {
                 do {
                     for try await line in pipe.fileHandleForReading.bytes.lines {
@@ -40,7 +57,6 @@ public enum TMCommands {
                 reader.cancel()
                 if box.process.isRunning { box.process.terminate() }
             }
-            do { try box.process.run() } catch { continuation.finish() }
         }
     }
 
@@ -50,15 +66,32 @@ public enum TMCommands {
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: path)
                 process.arguments = arguments
-                let pipe = Pipe()
-                process.standardOutput = pipe
-                process.standardError = FileHandle.nullDevice
+                let outPipe = Pipe()
+                let errPipe = Pipe()
+                process.standardOutput = outPipe
+                process.standardError = errPipe
                 do { try process.run() } catch {
                     continuation.resume(throwing: error)
                     return
                 }
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                let errBox = DataBox()
+                let group = DispatchGroup()
+                group.enter()
+                DispatchQueue.global(qos: .utility).async {
+                    errBox.data = errPipe.fileHandleForReading.readDataToEndOfFile()
+                    group.leave()
+                }
+                let data = outPipe.fileHandleForReading.readDataToEndOfFile()
+                group.wait()
                 process.waitUntilExit()
+                if process.terminationStatus != 0 {
+                    continuation.resume(throwing: CommandError.nonZeroExit(
+                        command: (path as NSString).lastPathComponent,
+                        status: process.terminationStatus,
+                        stderr: String(decoding: errBox.data, as: UTF8.self)
+                    ))
+                    return
+                }
                 continuation.resume(returning: data)
             }
         }
@@ -67,4 +100,8 @@ public enum TMCommands {
 
 private final class ProcessBox: @unchecked Sendable {
     let process = Process()
+}
+
+private final class DataBox: @unchecked Sendable {
+    var data = Data()
 }

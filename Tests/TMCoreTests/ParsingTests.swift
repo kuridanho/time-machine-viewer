@@ -21,6 +21,7 @@ let copyProgressMessage = """
     #expect(s.percentPerHour == 1.54)
     #expect(s.mbPerSec == 0.15)
     #expect(s.avgMBPerSec == 0.05)
+    #expect(s.itemsPerSec == 2.09)
     #expect(s.avgItemsPerSec == 2.76)
     #expect(s.byPhysicalSize == 3)
     #expect(s.byItemCount == 7)
@@ -207,6 +208,70 @@ let copyProgressMessage = """
     #expect(r.bandSyncs.count == 1)
     #expect(r.bandCloses.count == 1)
     #expect(r.opensPerReadWrite == 1)
+}
+
+@Test func ignoresAttemptChangesAndGapsInDwellAndUnchangedSince() {
+    func sample(_ minute: Double, _ path: String, items: Int, attempt: Int) -> CopyProgressSample {
+        var s = CopyProgressSample(date: Date(timeIntervalSince1970: minute * 60))
+        s.currentPath = path
+        s.copiedCount = items
+        s.attempt = attempt
+        return s
+    }
+    let samples = [
+        sample(0, "/Users/me/A/1", items: 100, attempt: 1),
+        sample(30, "/Users/me/A/2", items: 150, attempt: 1),
+        sample(31, "/Users/me/A/3", items: 10, attempt: 2),
+        sample(32, "/Users/me/B/1", items: 20, attempt: 2),
+    ]
+    let stats = DirectoryAnalysis.dwell(samples: samples, depth: 4)
+    #expect(stats.count == 1)
+    #expect(stats.first?.path == "/Users/me/A")
+    #expect(stats.first?.seconds == 60)
+    #expect(stats.first?.items == 10)
+
+    let samePathAcrossAttempts = [
+        sample(0, "/Users/me/A/1", items: 10, attempt: 1),
+        sample(1, "/Users/me/A/1", items: 20, attempt: 1),
+        sample(2, "/Users/me/A/1", items: 5, attempt: 2),
+        sample(3, "/Users/me/A/1", items: 15, attempt: 2),
+    ]
+    let sinceAttempt = DirectoryAnalysis.unchangedSince(samePathAcrossAttempts) {
+        $0.currentPath.map { DirectoryAnalysis.prefix(of: $0, depth: 4) }
+    }
+    #expect(sinceAttempt == Date(timeIntervalSince1970: 2 * 60))
+
+    let samePathAcrossGap = [
+        sample(0, "/Users/me/A/1", items: 10, attempt: 1),
+        sample(30, "/Users/me/A/1", items: 20, attempt: 1),
+    ]
+    let sinceGap = DirectoryAnalysis.unchangedSince(samePathAcrossGap) {
+        $0.currentPath.map { DirectoryAnalysis.prefix(of: $0, depth: 4) }
+    }
+    #expect(sinceGap == Date(timeIntervalSince1970: 30 * 60))
+}
+
+@Test func ignoresReusedFDAndFailedOpensInFSUsage() {
+    let band = "/Volumes/.timemachine/NAS/UUID/Time Machine/Mac.sparsebundle/bands/1a3"
+    let failedBand = "/Volumes/.timemachine/NAS/UUID/Time Machine/Mac.sparsebundle/bands/missing"
+    let lines = [
+        "16:31:02.100000  open              F=6        (R_____)  \(band)          0.100000 W diskimagesiod.10",
+        "16:31:02.200000  pread             F=6    B=0x1000     O=0x00000000      0.010000 W diskimagesiod.10",
+        "16:31:02.300000  open              F=6        (R_____)  /etc/hosts        0.001000   diskimagesiod.10",
+        "16:31:02.310000  pread             F=6    B=0x1000     O=0x00000000      0.002000   diskimagesiod.10",
+        "16:31:02.400000  open              F=7  [  2]  (R_____)  \(failedBand)   0.005000   diskimagesiod.10",
+        "16:31:02.410000  pread             F=7    B=0x1000     O=0x00000000      0.003000   diskimagesiod.10",
+    ]
+    let r = FSUsageReport.build(lines: lines, duration: 60)
+    #expect(r.bandOpens.count == 2)
+    #expect(r.distinctBands == 1)
+    #expect(r.bandReads.count == 1)
+}
+
+@Test func throwsOnNonZeroExitFromCommand() async {
+    await #expect(throws: CommandError.self) {
+        _ = try await TMCommands.run("/usr/bin/false", [])
+    }
 }
 
 /// 手元の生の記録で集計を確かめる: TM_FSUSAGE_FILE=… swift test --filter printsSummaryOfLocalFile

@@ -2,8 +2,22 @@ import Foundation
 
 /// 正規表現の最初の一致からキャプチャを取り出す小さな補助。
 enum RX {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var cache: [String: NSRegularExpression] = [:]
+
+    private static func regex(_ pattern: String) -> NSRegularExpression? {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached = cache[pattern] { return cached }
+        guard let compiled = try? NSRegularExpression(pattern: pattern, options: [.anchorsMatchLines]) else {
+            return nil
+        }
+        cache[pattern] = compiled
+        return compiled
+    }
+
     static func groups(_ pattern: String, in text: String) -> [String?]? {
-        guard let re = try? NSRegularExpression(pattern: pattern, options: [.anchorsMatchLines]) else { return nil }
+        guard let re = regex(pattern) else { return nil }
         let ns = text as NSString
         guard let m = re.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)) else { return nil }
         return (0..<m.numberOfRanges).map { i in
