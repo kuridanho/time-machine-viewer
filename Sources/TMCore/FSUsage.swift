@@ -128,9 +128,12 @@ public struct FSUsageReport: Sendable {
             if e.isBandOpen {
                 let name = e.path ?? e.openedName ?? "?"
                 add(&bandOpen, e)
-                bands.insert(name)
-                if let fd = e.resultFD, e.errno == nil { openBands[proc, default: [:]][fd] = name }
+                if e.errno == nil {
+                    bands.insert(name)
+                    if let fd = e.resultFD { openBands[proc, default: [:]][fd] = name }
+                }
             } else if call.hasPrefix("open") || e.command == "OPENFROM" {
+                if let fd = e.resultFD, e.errno == nil { openBands[proc]?[fd] = nil }
                 continue
             } else if let fd = e.fd, openBands[proc]?[fd] != nil {
                 if call.hasPrefix("close") {

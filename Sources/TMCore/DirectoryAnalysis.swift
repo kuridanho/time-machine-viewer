@@ -41,7 +41,9 @@ public enum DirectoryAnalysis {
 
         for (prev, next) in zip(withPath, withPath.dropFirst()) {
             let dt = next.date.timeIntervalSince(prev.date)
-            guard dt > 0, dt <= maxGap else { continue }
+            guard dt > 0, dt <= maxGap, prev.attempt == next.attempt,
+                  next.processedItems >= prev.processedItems,
+                  next.processedBytes >= prev.processedBytes else { continue }
             add(prev, seconds: dt,
                 items: next.processedItems - prev.processedItems,
                 bytes: next.processedBytes - prev.processedBytes)
@@ -55,12 +57,13 @@ public enum DirectoryAnalysis {
 
     /// 末尾から遡り、`key` が同じ値を返し続けている最初の記録の時刻。
     public static func unchangedSince<T: Equatable>(
-        _ samples: [CopyProgressSample], key: (CopyProgressSample) -> T?
+        _ samples: [CopyProgressSample], maxGap: TimeInterval = 15 * 60, key: (CopyProgressSample) -> T?
     ) -> Date? {
         guard let last = samples.last, let value = key(last) else { return nil }
         var since = last.date
         for s in samples.reversed().dropFirst() {
-            guard key(s) == value else { break }
+            let dt = since.timeIntervalSince(s.date)
+            guard s.attempt == last.attempt, dt >= 0, dt <= maxGap, key(s) == value else { break }
             since = s.date
         }
         return since
